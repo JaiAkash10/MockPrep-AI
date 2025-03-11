@@ -1,0 +1,210 @@
+/* style.css */
+
+/* Reset and Base Styles */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background: linear-gradient(135deg, #1a1a1a, #222);
+    color: #e0e0e0;
+    font-family: 'Inter', sans-serif;
+    line-height: 1.7;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Container Styles */
+.container {
+    width: 90%;
+    max-width: 850px;
+    margin: 40px auto;
+    padding: 50px;
+    background: linear-gradient(135deg, #333, #3a3a3a);
+    border-radius: 16px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.container:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.7);
+}
+
+/* Typography */
+h1, h2, h3, p, ul, li, a {
+    color: #e0e0e0;
+}
+
+h1 {
+    font-size: 3.2em;
+    margin-bottom: 25px;
+    text-align: center;
+    font-weight: 700;
+    letter-spacing: -1px;
+}
+
+h2 {
+    font-size: 2.5em;
+    margin-bottom: 30px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+}
+
+.interview-history{
+    margin-bottom: 5px;
+}
+
+p {
+    margin-bottom: 25px;
+    line-height: 1.8;
+}
+
+ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+li {
+    margin-bottom: 15px;
+}
+
+.history-list li{
+    border-bottom: 1px solid #e0e0e0;
+    text-decoration: none;
+    padding-bottom: 10px;
+}
+
+.history-list li:first-child{
+    padding-top: 10px;
+}
+
+
+.result-history-list li{
+    border-bottom: 1px solid #e0e0e0;
+    text-decoration: none;
+}
+
+.result-history-list li:first-child{
+    border-top: 1px solid #e0e0e0;
+    padding-top: 5px;
+}
+
+.link-button {
+    display: inline-block;
+    padding: 12px 25px;
+    background: linear-gradient(135deg, #00bfff, #00a2e6);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    margin: 15px 10px;
+    text-decoration: none;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    box-shadow: 0 4px 12px rgba(0, 191, 255, 0.3);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.link-button:hover {
+    transform: translateY(-3px);
+    color: white;
+    box-shadow: 0 5px 15px rgba(0, 191, 255, 0.4);
+    font-weight: 600;
+    border-bottom: none;
+}
+
+a {
+    color: #00a2e6;
+    text-decoration: none;
+    transition: color 0.3s ease, transform 0.2s ease;
+    border-bottom: 1px solid transparent;
+}
+
+a:hover {
+    color: #66d9ff;
+    transform: translateY(-2px);
+    border-bottom: 1px solid #66d9ff;
+    outline: none; 
+}
+
+/* Forms */
+form {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 500px; /* Wider form */
+    margin: 40px auto;
+}
+
+label {
+    margin-top: 20px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+input[type="email"],
+input[type="password"],
+input[type="text"] {
+    padding: 16px;
+    margin-top: 12px;
+    border: 1px solid #555;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #444, #4a4a4a); /* Gradient input background */
+    color: #e0e0e0;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="text"]:focus {
+    border-color: #00bfff;
+    outline: none;
+    box-shadow: 0 0 8px rgba(0, 191, 255, 0.7); /* More pronounced focus shadow */
+}
+
+button, input[type="submit"] {
+    padding: 18px 30px;
+    background: linear-gradient(135deg, #00bfff, #00a2e6); /* Gradient button background */
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: medium;
+    cursor: pointer;
+    margin-top: 40px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    box-shadow: 0 5px 15px rgba(0, 191, 255, 0.4); /* Button shadow */
+}
+
+button:hover, input[type="submit"]:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(0, 191, 255, 0.5); /* Hover shadow */
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .container {
+        width: 95%;
+        padding: 30px;
+        margin: 30px auto;
+    }
+
+    h1 {
+        font-size: 2.8em;
+    }
+
+    h2 {
+        font-size: 2.2em;
+    }
+
+    form {
+        max-width: 100%;
+    }
+}
