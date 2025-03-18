@@ -13,12 +13,6 @@ from flask_login import LoginManager, login_required, login_user, current_user, 
 from bson.objectid import ObjectId
 import google.generativeai as genai 
 
-# from flask import Flask, render_template, request, jsonify
-# from twelvelabs import TwelveLabs
-# from twelvelabs.models.task import Task
-# import requests
-# from dotenv import load_dotenv
-
 load_dotenv()
 
 
@@ -50,7 +44,6 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     # Load your user from the database based on user_id
     # Return None if the user doesn't exist
-    # Example:
     user = users_collection.find_one({'_id': ObjectId(user_id)})
     if user:
         return User(user)
@@ -103,7 +96,6 @@ def check_api_connection(api_key):
         return False, f"API connection check failed. Detailed error: {str(e)}"
     
 def get_transcript(video_file):
-    # This is a placeholder. Replace with your actual speech-to-text logic.
     return "This is a simulated transcript of the candidate's response."
 
 def process_api_response(data):
@@ -196,9 +188,6 @@ def register():
         index_result, index_error = check_index_id(api_key, index_id)
         if not index_result:
             return render_template('register.html', error=index_error)
-
-        # if not check_api_connection(api_key): #Corrected line
-        #     return render_template('register.html', error="Invalid TwelveLabs API key")
 
         hashed_password = generate_password_hash(password)
         users_collection.insert_one({
