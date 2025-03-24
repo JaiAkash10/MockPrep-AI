@@ -18,7 +18,8 @@ document.addEventListener('DOMContentLoaded', () => {
             rec: document.getElementById('rec-time')
         },
         status: document.getElementById('status-message'),
-        result: document.getElementById('result')
+        result: document.getElementById('result'),
+        nextQuestionButton: document.getElementById('nextQuestionButton'),
     };
 
     let mediaRecorder;
@@ -26,10 +27,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const prepTime = 20;
     const recTime = 30;
     let currentTimer;
+    let stream;
 
     async function setupCamera() {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
+            stream = await navigator.mediaDevices.getUserMedia({
                 video: { width: 640, height: 480 },
                 audio: true
             });
@@ -45,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             mediaRecorder.onstop = () => {
+                console.log("mediaRecorder.onstop called");
                 const blob = new Blob(recordedChunks, { type: 'video/mp4' });
                 console.log('Recording stopped. Blob size:', blob.size, 'bytes');
                 if (blob.size > 0) {
@@ -59,9 +62,35 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function stopCamera() {
+        console.log("stopCamera called"); // Add this
+        if (stream) {
+            try {
+                stream.getTracks().forEach(track => track.stop());
+                elements.video.srcObject = null;
+                stream = null;
+                console.log("Camera stopped");
+            } catch (e) {
+                console.log("Error inside of stopCamera", e);
+            }
+        } else {
+            console.log("cameraStream is null");
+        }
+    }
+
     function showSection(section) {
         Object.values(elements.sections).forEach(s => s.classList.add('hidden'));
         elements.sections[section].classList.remove('hidden');
+
+        if (section === 'interview' || section === 'result') {
+            if (elements.nextQuestionButton.classList.contains('hidden')) {
+                elements.nextQuestionButton.classList.remove('hidden');
+            }
+        } else {
+            if (!elements.nextQuestionButton.classList.contains('hidden')) {
+                elements.nextQuestionButton.classList.add('hidden');
+            }
+        }
     }
 
     function updateTimer(timerElement, time) {
@@ -89,8 +118,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function startPreparationTimer() {
         showSection('interview');
-        elements.status.textContent = "Prepare your answer...";
-        currentTimer = startTimer('prep');
+    elements.status.textContent = "Prepare your answer...";
+    if (currentTimer) {
+        clearInterval(currentTimer);
+    }
+    updateTimer(elements.timerDisplays.prep, prepTime);
+
+    setupCamera(); 
+    currentTimer = startTimer('prep');
     }
 
     function startRecording() {
@@ -103,10 +138,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function stopRecording() {
+        console.log("stopRecording called");
         mediaRecorder.stop();
         elements.status.textContent = "Processing your response...";
         showSection('result');
         console.log('Recording stopped');
+        stopCamera();
     }
 
     function uploadVideo(blob) {
@@ -188,6 +225,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         elements.result.innerHTML = resultHTML;
+        if (!data.error && elements.nextQuestionButton) {
+            elements.nextQuestionButton.classList.remove('hidden');
+        }
     }
 
     function showError(message) {
@@ -202,6 +242,11 @@ document.addEventListener('DOMContentLoaded', () => {
             fetch('/get_question')
                 .then(response => response.json())
                 .then(data => {
+                    console.log("Data from /get_question:", data);
+                    if (data.message === "All questions have been asked.") {
+                        alert("All questions have been asked.");
+                        return;
+                    }
                     console.log("Question from server:", data.question);
                     elements.question.textContent = data.question;
                     startPreparationTimer();
@@ -212,4 +257,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
         });
     });
+
+    elements.nextQuestionButton.addEventListener('click', () => {
+        elements.nextQuestionButton.classList.add('hidden');
+        fetch('/get_question')
+            .then(response => response.json())
+            .then(data => {
+                if (data.message === "All questions have been asked.") {
+                    alert("All questions have been asked.");
+                    showSection('start');
+                    elements.videoContainer.classList.add('hidden');
+                    clearInterval(currentTimer);
+                    return;
+                }
+                elements.question.textContent = data.question;
+                showSection('interview');
+                elements.videoContainer.classList.add('hidden');
+                startPreparationTimer();
+            })
+            .catch(error => {
+                console.error('Error fetching next question:', error);
+                showError('Failed to fetch next question. Please try again.');
+            });
+    });
+
 });

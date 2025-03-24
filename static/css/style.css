@@ -203,3 +203,13 @@ button:hover, input[type="submit"]:hover {
         max-width: 100%;
     }
 }
+
+#start-section,
+#interview-section,
+#result-section {
+    position: relative; /* Ensure sections can overlap */
+}
+
+.hidden {
+    display: none;
+}

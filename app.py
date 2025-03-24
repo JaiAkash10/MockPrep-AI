@@ -148,10 +148,12 @@ def login():
         user_data = users_collection.find_one({"email": email})
         if user_data and check_password_hash(user_data['password'], password):
             user = User(user_data)
-            login_user(user)  # Log the user in
+            login_user(user)
             session['email'] = email
             session['api_key'] = user_data['api_key']
             session['index_id'] = user_data['index_id']
+            session['asked_questions'] = [] #reset session variables on login
+            session['current_question'] = None
             return redirect(url_for('index'))
         else:
             return render_template('login.html', error='Invalid email or password')
@@ -209,9 +211,23 @@ def index():
 @app.route('/get_question')
 @login_required
 def get_question():
-    question = random.choice(INTERVIEW_QUESTIONS)
+    print("get_question route called")
+    print(f"asked_questions before: {session.get('asked_questions')}") #added
+    if 'asked_questions' not in session:
+        session['asked_questions'] = []
+
+    available_questions = [q for q in INTERVIEW_QUESTIONS if q not in session['asked_questions']]
+    print(f"available_questions: {available_questions}") #added
+
+    if not available_questions:
+        return jsonify({"message": "All questions have been asked."})
+
+    question = random.choice(available_questions)
+    session['asked_questions'].append(question)
     session['current_question'] = question
+    print(f"asked_questions after: {session.get('asked_questions')}") #added
     return jsonify({"question": question})
+
 
 @app.route('/upload', methods=['POST'])
 @login_required
@@ -232,9 +248,9 @@ def upload():
 
     video_path = os.path.join('uploads', 'interview.mp4')
     video.save(video_path)
-    
+
     file_size = os.path.getsize(video_path)
-    if file_size > 2 * 1024 * 1024 * 1024:  
+    if file_size > 2 * 1024 * 1024 * 1024:
         return jsonify({"error": "Video file size exceeds 2GB limit"}), 400
 
     try:
@@ -243,26 +259,26 @@ def upload():
             index_id=index_id,
             file=video_path
         )
-        
+
         def on_task_update(task: Task):
             print(f"Task Status={task.status}")
 
         task.wait_for_done(sleep_interval=5, callback=on_task_update)
-        
+
         if task.status != "ready":
             raise RuntimeError(f"Indexing failed with status {task.status}")
 
         print("Task completed successfully. Video ID:", task.video_id)
-        
-        prompt = """You're an Interviewer, Analyze the video clip of the interview answer. 
-        Rules for scoring:  
-        - If **no face is detected**, give **less than 5** for all categories.  
-        - If **no voice is detected**, set `"clarity"`, `"speech_rate"`, `"voice_tone"` to **1** and add `"No speech detected"` to `"imp_points"`.  
-        - If **both face and voice are missing**, return the following JSON:  
+
+        prompt = """You're an Interviewer, Analyze the video clip of the interview answer.
+        Rules for scoring:
+        - If **no face is detected**, give **less than 5** for all categories.
+        - If **no voice is detected**, set `"clarity"`, `"speech_rate"`, `"voice_tone"` to **1** and add `"No speech detected"` to `"imp_points"`.
+        - If **both face and voice are missing**, return the following JSON:
         ```json
         {
             "error": "No valid face or speech detected in the video."
-        }  
+        }
 
         Otherwise provide the response in the following JSON format with numerical values from 1-10:
         {
@@ -279,13 +295,13 @@ def upload():
             video_id=task.video_id,
             prompt=prompt
         )
- 
+
         print("Raw API Response:", result.data)
         processed_data = process_api_response(result.data)
 
         # Store results in Database
         email = session['email']
-        question = session.get('current_question') #Retrieve question from session.
+        question = session.get('current_question')  # Retrieve question from session.
 
         print(f"Processed data: {processed_data}")
 
@@ -295,7 +311,7 @@ def upload():
         results_collection.insert_one({
             "email": email,
             "video_id": task.video_id,
-            "question": question, #Use the question from the session.
+            "question": question,  # Use the question from the session.
             "results": processed_data,
             "gemini_analysis": gemini_analysis
         })
@@ -304,27 +320,89 @@ def upload():
             "twelvelabs_data": processed_data,
             "gemini_analysis": gemini_analysis
         }), 200
-        
+
     except Exception as e:
         print(f"Error processing video: {str(e)}")
         return jsonify({"error": f"Error processing video: {str(e)}"}), 500
 
+    finally:
+        if os.path.exists(video_path):
+            os.remove(video_path)
+
 def analyze_with_gemini(question, transcript):
+    
     prompt = f"""
-    Evaluate the following response to the question: "{question}".
+    You are a professional career coach providing constructive feedback on interview performance.
 
-    Response: "{transcript}"
+    Your task is to analyze the following response to an interview question. 
+    Provide the analysis in markdown format, adhering strictly to the following structure:
 
-    Provide a concise and respectful evaluation of the response. Focus on providing constructive criticism. Then, offer two good answer templates as suggestions, one for freshers and one for experienced candidates.
+    **Analysis:**
 
-    The response should be:
-    1. Short and to the point.
-    3. The response must contai a maximum of 5 points.
-    2. Respectful and encouraging.
-    3. Focused on improvement.
-    4. Provide a simple and easy to understand template for a good answer for both freshers and experienced candidates.
-    5. Provide the response in a human written format.
-    6. After each point leave a line break.
+    Evaluation: [A brief, human-written evaluation of the response, highlighting strengths and areas for improvement. Use a positive and encouraging tone.]
+
+    Constructive Criticism:
+    * [Point 1: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
+    * [Point 2: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
+    * [Point 3: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
+    * [Point 4: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
+    * [Point 5: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
+
+    Answer Templates:
+    Fresher: [Example answer template for a fresher, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+
+    Experienced: [Example answer template for an experienced candidate, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+
+    ---
+
+    **Special Instruction: If no speech is detected in the transcript, respond with the following, but still generate the answer templates based on the question:**
+
+    **Analysis:**
+
+    Evaluation: No speech was detected in the provided transcript.
+
+    Answer Templates:
+    Fresher: [Example answer template for a fresher, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+
+    Experienced: [Example answer template for an experienced candidate, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+
+    ---
+
+    Here are a few examples of the desired output format:
+
+    **Example 1:**
+    Question: "Tell me about your greatest weakness."
+    Response: "I sometimes work too hard."
+    Analysis:
+    Evaluation: The candidate's response is a common attempt to frame a positive trait as a weakness. While well-intentioned, it lacks genuine self-awareness.
+    Constructive Criticism:
+    * The response is cliche and lacks authenticity.
+    * It doesn't demonstrate self-awareness or a willingness to improve.
+    * It fails to address a genuine weakness.
+    Answer Templates:
+    Fresher: "While I'm generally organized, I sometimes struggle with time management when handling multiple tasks. I'm actively working on improving this by using time-blocking techniques."
+    Experienced: "In the past, I've sometimes hesitated to delegate tasks. I've learned that empowering my team leads to better outcomes and have been working to improve my delegation skills."
+
+    **Example 2:**
+    Question: "Why should we hire you?"
+    Response: "I'm a hard worker."
+    Analysis:
+    Evaluation: This response is too vague and doesn't effectively highlight the candidate's specific skills or qualifications for the role.
+    Constructive Criticism:
+    * It lacks specific examples of achievements.
+    * It doesn't connect the candidate's skills to the company's needs.
+    * It's not memorable or impactful.
+    Answer Templates:
+    Fresher: "I'm eager to learn and contribute. My coursework has provided me with a strong foundation in [relevant skill], and I'm confident I can quickly become a valuable asset to your team."
+    Experienced: "My experience in [relevant field] aligns perfectly with the requirements of this role. I have a proven track record of [specific achievement] and I'm excited about the opportunity to contribute to your company's success."
+
+    ---
+
+    Now, evaluate the following response:
+
+    Question: "{question}".
+    Response: "{transcript}".
+    Analysis:
     """
     try:
         response = gemini_model.generate_content(prompt)
@@ -365,6 +443,8 @@ def logout():
     session.pop('email', None)
     session.pop('api_key', None)
     session.pop('index_id', None)
+    session.pop('asked_questions', None)
+    session.pop('current_question', None)
     return redirect(url_for('login'))
 
 if __name__ == '__main__':
