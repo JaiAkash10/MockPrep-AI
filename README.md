@@ -49,7 +49,7 @@ If you are a job seeker looking to improve your interview skills, the AI Intervi
 
 **Frontend** - JavaScript, HTML, CSS
 
-**Backend** -  Flask, Twelve Labs
+**Backend** -  Flask, Twelve Labs, Gemini
 
 **AI Technologies** - Marengo 2.6 (Video Embedding), Pegasus 1.1 (Generative Model), Gemini 2.0 
  
