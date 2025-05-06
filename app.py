@@ -12,12 +12,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import LoginManager, login_required, login_user, current_user, UserMixin, logout_user
 from bson.objectid import ObjectId
 import google.generativeai as genai 
+import speech_recognition as sr
+from moviepy.editor import VideoFileClip
 
 load_dotenv()
 
 
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY') 
+app.secret_key = os.getenv('SECRET_KEY')
 
 # MongoDB setup
 mongo_uri = os.getenv("MONGO_URI")
@@ -94,9 +96,34 @@ def check_api_connection(api_key):
         return True, None
     except requests.RequestException as e:
         return False, f"API connection check failed. Detailed error: {str(e)}"
+
+
+def get_transcript(video_file_path):
+    recognizer = sr.Recognizer()
+    audio_path = "temp_audio.wav"
     
-def get_transcript(video_file):
-    return "This is a simulated transcript of the candidate's response."
+    try:
+        # Use 'with' to ensure the video file is closed after use
+        with VideoFileClip(video_file_path) as video:
+            video.audio.write_audiofile(audio_path, codec='pcm_s16le')
+
+        with sr.AudioFile(audio_path) as source:
+            audio = recognizer.record(source)
+
+        transcript = recognizer.recognize_google(audio)
+        return transcript
+
+    except Exception as e:
+        print(f"Error extracting transcript: {e}")
+        return ""
+
+    finally:
+        # Clean up the audio file regardless of success or failure
+        if os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except Exception as cleanup_error:
+                print(f"Error cleaning up audio file: {cleanup_error}")
 
 def process_api_response(data):
     processed_data = {
@@ -337,21 +364,21 @@ def analyze_with_gemini(question, transcript):
     Your task is to analyze the following response to an interview question. 
     Provide the analysis in markdown format, adhering strictly to the following structure:
 
-    **Analysis:**
+    Analysis:\n
 
-    Evaluation: [A brief, human-written evaluation of the response, highlighting strengths and areas for improvement. Use a positive and encouraging tone.]
+    Evaluation: [A brief, human-written evaluation of the response, highlighting strengths and areas for improvement. Use a positive and encouraging tone.]\n
 
     Constructive Criticism:
-    * [Point 1: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
-    * [Point 2: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
-    * [Point 3: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
-    * [Point 4: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
-    * [Point 5: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]
+    * [Point 1: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]\n
+    * [Point 2: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]\n
+    * [Point 3: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]\n
+    * [Point 4: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]\n
+    * [Point 5: Specific, actionable criticism in bullet-point format. Use a positive and encouraging tone. Add a line break after the point.]\n
 
-    Answer Templates:
-    Fresher: [Example answer template for a fresher, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+    Answer Templates:\n
+    * Fresher: [Example answer template for a fresher, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]\n
 
-    Experienced: [Example answer template for an experienced candidate, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+    * Experienced: [Example answer template for an experienced candidate, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]\n
 
     ---
 
@@ -359,12 +386,12 @@ def analyze_with_gemini(question, transcript):
 
     **Analysis:**
 
-    Evaluation: No speech was detected in the provided transcript.
+    Evaluation: No speech was detected in the provided transcript.\n
 
     Answer Templates:
-    Fresher: [Example answer template for a fresher, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+    *Fresher: [Example answer template for a fresher, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]\n
 
-    Experienced: [Example answer template for an experienced candidate, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]
+    *Experienced: [Example answer template for an experienced candidate, providing a clear structure for an effective answer. Use a positive and encouraging tone. Add a line break after the point.]\n
 
     ---
 

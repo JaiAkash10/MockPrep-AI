@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function stopCamera() {
-        console.log("stopCamera called"); // Add this
+        console.log("stopCamera called");
         if (stream) {
             try {
                 stream.getTracks().forEach(track => track.stop());
@@ -81,16 +81,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function showSection(section) {
         Object.values(elements.sections).forEach(s => s.classList.add('hidden'));
         elements.sections[section].classList.remove('hidden');
-
-        if (section === 'interview' || section === 'result') {
-            if (elements.nextQuestionButton.classList.contains('hidden')) {
-                elements.nextQuestionButton.classList.remove('hidden');
-            }
-        } else {
-            if (!elements.nextQuestionButton.classList.contains('hidden')) {
-                elements.nextQuestionButton.classList.add('hidden');
-            }
-        }
     }
 
     function updateTimer(timerElement, time) {
@@ -118,14 +108,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function startPreparationTimer() {
         showSection('interview');
-    elements.status.textContent = "Prepare your answer...";
-    if (currentTimer) {
-        clearInterval(currentTimer);
-    }
-    updateTimer(elements.timerDisplays.prep, prepTime);
+        elements.status.textContent = "Prepare your answer...";
+        if (currentTimer) {
+            clearInterval(currentTimer);
+        }
+        updateTimer(elements.timerDisplays.prep, prepTime);
 
-    setupCamera(); 
-    currentTimer = startTimer('prep');
+        setupCamera(); 
+        currentTimer = startTimer('prep');
+        elements.nextQuestionButton.classList.remove('hidden');
     }
 
     function startRecording() {
@@ -134,6 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
         mediaRecorder.start(1000); // Record in 1-second chunks
         elements.status.textContent = "Recording in progress...";
         currentTimer = startTimer('rec');
+        elements.nextQuestionButton.classList.add('hidden');
         console.log('Recording started');
     }
 
@@ -176,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function displayResults(data) {
         let resultHTML = '<h3>Analysis Results:</h3>';
-
+    
         if (data.error) {
             resultHTML += `<p class="error">Error: ${data.error}</p>`;
         } else {
@@ -189,9 +181,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 { key: 'body_language', label: 'Body Language' },
                 { key: 'voice_tone', label: 'Voice Tone' },
             ];
-
+    
             metrics.forEach(metric => {
-                const score = data.twelvelabs_data[metric.key] !== undefined ? data.twelvelabs_data[metric.key] : 'N/A';
+                const score = data.twelvelabs_data && data.twelvelabs_data[metric.key] !== undefined ? data.twelvelabs_data[metric.key] : 'N/A';
                 resultHTML += `
                     <div class="score">
                         <span class="score-label">${metric.label}</span>
@@ -200,30 +192,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 `;
             });
             resultHTML += '</div>';
-
-            if (data.imp_points && data.imp_points.length > 0) {
+    
+            if (data.twelvelabs_data && data.twelvelabs_data.imp_points && data.twelvelabs_data.imp_points.length > 0) {
                 resultHTML += '<h4>Key Points:</h4><ul>';
-                data.imp_points.forEach(point => {
+                data.twelvelabs_data.imp_points.forEach(point => {
                     resultHTML += `<li>${point}</li>`;
                 });
                 resultHTML += '</ul>';
             } else {
                 resultHTML += '<p>No key points found in the analysis.</p>';
             }
-
-            if (data.contextual_analysis) {
-                resultHTML += `<h4>Contextual Analysis:</h4><p>${data.contextual_analysis}</p>`;
-            }
-
-            if (data.accuracy_analysis) {
-                resultHTML += `<h4>Accuracy Analysis:</h4><p>${data.accuracy_analysis}</p>`;
-            }
-
+    
             if (data.gemini_analysis) {
-                resultHTML += `<h4>Gemini Analysis:</h4><p>${data.gemini_analysis}</p>`;
+                resultHTML += '<h4>Gemini Analysis:</h4>';
+                if (typeof data.gemini_analysis === 'string') {
+                    resultHTML += `<p>${data.gemini_analysis}</p>`;
+                } else if (typeof data.gemini_analysis === 'object' && data.gemini_analysis !== null) {
+                    resultHTML += '<ul>';
+                    for (const key in data.gemini_analysis) {
+                        if (data.gemini_analysis.hasOwnProperty(key)) {
+                            const formattedKey = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' '); // Format key
+                            resultHTML += `<li><strong>${formattedKey}:</strong> ${data.gemini_analysis[key]}</li>`;
+                        }
+                    }
+                    resultHTML += '</ul>';
+                } else {
+                    resultHTML += '<p>No Gemini analysis available.</p>';
+                }
             }
         }
-
+    
         elements.result.innerHTML = resultHTML;
         if (!data.error && elements.nextQuestionButton) {
             elements.nextQuestionButton.classList.remove('hidden');

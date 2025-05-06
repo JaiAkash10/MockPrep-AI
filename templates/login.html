@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body>
     <div class="container">
@@ -16,7 +17,11 @@
             <label for="email">Email:</label><br>
             <input type="email" id="email" name="email" required><br><br>
             <label for="password">Password:</label><br>
-            <input type="password" id="password" name="password" required><br><br>
+            <input type="password" id="password" name="password" required>
+            <!-- <span class="password-toggle" id="password-toggle">
+                <i class="eye-icon" id="eye-icon"></i>
+            </span><br><br> -->
+            <br><br>
             <input type="submit" value="Login">
         </form>
         <p>Don't have an account? <a href="/register">Register here</a></p>
