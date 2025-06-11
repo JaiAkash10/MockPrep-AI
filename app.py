@@ -2,24 +2,41 @@ import os
 import json
 import random
 import requests
+import datetime
 from urllib.parse import unquote
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask import Flask, request, jsonify, session
+from flask_cors import CORS
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from dotenv import load_dotenv
 from twelvelabs import TwelveLabs
 from twelvelabs.models.task import Task
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_login import LoginManager, login_required, login_user, current_user, UserMixin, logout_user
 from bson.objectid import ObjectId
 import google.generativeai as genai 
 import speech_recognition as sr
 from moviepy.editor import VideoFileClip
+from datetime import timedelta
+from flask_login import LoginManager, UserMixin
 
 load_dotenv()
 
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY')
+# Configure CORS to allow requests from React frontend
+CORS(app, resources={
+    r"/*": {
+        "origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
+
+# JWT Configuration
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)
+jwt = JWTManager(app)
 
 # MongoDB setup
 mongo_uri = os.getenv("MONGO_URI")
@@ -82,20 +99,29 @@ INTERVIEW_QUESTIONS = [
 
 def check_api_connection(api_key):
     try:
-
-        api_url = "https://api.twelvelabs.io/v1.3/tasks" 
-        print(f"Attempting to connect to API: {api_url}")
-        print(f"API Key (first 4 chars): {api_key[:4]}...")
+        api_url = "https://api.twelvelabs.io/v1.3/tasks"
+        response = requests.get(
+            api_url,
+            headers={
+                "x-api-key": api_key,
+                "Accept": "application/json"
+            },
+            timeout=10  # Set timeout to 10 seconds
+        )
         
-        response = requests.get(api_url, headers={
-            "x-api-key": api_key,
-            "Accept": "application/json"
-        })
-        if response.status_code not in [200, 401, 403]:
+        if response.status_code == 200:
+            return True, None
+        elif response.status_code in [401, 403]:
+            return False, "Invalid API key"
+        else:
             return False, f"API key check failed with status code: {response.status_code}"
-        return True, None
+            
+    except requests.Timeout:
+        return False, "API connection timed out. Please try again."
+    except requests.ConnectionError:
+        return False, "Could not connect to API. Please check your internet connection."
     except requests.RequestException as e:
-        return False, f"API connection check failed. Detailed error: {str(e)}"
+        return False, f"API connection check failed: {str(e)}"
 
 
 def get_transcript(video_file_path):
@@ -167,24 +193,42 @@ def process_api_response(data):
     
     return processed_data
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/api/auth/login', methods=['POST'])
 def login():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        user_data = users_collection.find_one({"email": email})
-        if user_data and check_password_hash(user_data['password'], password):
-            user = User(user_data)
-            login_user(user)
-            session['email'] = email
-            session['api_key'] = user_data['api_key']
-            session['index_id'] = user_data['index_id']
-            session['asked_questions'] = [] #reset session variables on login
-            session['current_question'] = None
-            return redirect(url_for('index'))
-        else:
-            return render_template('login.html', error='Invalid email or password')
-    return render_template('login.html')
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+    
+    user_data = users_collection.find_one({"email": email})
+    if user_data and check_password_hash(user_data['password'], password):
+        access_token = create_access_token(identity=str(user_data['_id']))
+        return jsonify({
+            'token': access_token,
+            'user': {
+                'email': email,
+                'api_key': user_data['api_key'],
+                'index_id': user_data['index_id'],
+                'role': user_data.get('role', 'user')
+            }
+        })
+    return jsonify({'error': 'Invalid email or password'}), 401
+
+@app.route('/api/auth/validate', methods=['GET'])
+@jwt_required()
+def validate_token():
+    current_user_id = get_jwt_identity()
+    user_data = users_collection.find_one({"_id": ObjectId(current_user_id)})
+    if user_data:
+        return jsonify({
+            'valid': True,
+            'user': {
+                'email': user_data['email'],
+                'api_key': user_data['api_key'],
+                'index_id': user_data['index_id'],
+                'role': user_data.get('role', 'user')
+            }
+        })
+    return jsonify({'valid': False}), 401
 
 def check_index_id(api_key, index_id):
     try:
@@ -199,71 +243,98 @@ def check_index_id(api_key, index_id):
     except requests.RequestException as e:
         return False, f"Index ID connection check failed. Detailed error: {str(e)}"
 
-@app.route('/register', methods=['GET', 'POST'])
+@app.route('/api/auth/register', methods=['POST'])
 def register():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        api_key = request.form['api_key']
-        index_id = request.form['index_id']
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Invalid request data'}), 400
 
+        email = data.get('email')
+        password = data.get('password')
+        api_key = data.get('api_key')
+        index_id = data.get('index_id')
+
+        # Validate required fields
+        if not all([email, password, api_key, index_id]):
+            return jsonify({'error': 'All fields are required'}), 400
+
+        # Check if email already exists
         if users_collection.find_one({"email": email}):
-            return render_template('register.html', error='Email already registered')
+            return jsonify({'error': 'Email already registered'}), 400
 
-        api_result, api_error = check_api_connection(api_key)
-        if not api_result:
-            return render_template('register.html', error=api_error)
+        # Check API connection with timeout
+        try:
+            api_result, api_error = check_api_connection(api_key)
+            if not api_result:
+                return jsonify({'error': api_error}), 400
+        except Exception as e:
+            return jsonify({'error': f'API validation error: {str(e)}'}), 500
 
-        index_result, index_error = check_index_id(api_key, index_id)
-        if not index_result:
-            return render_template('register.html', error=index_error)
+        # Check Index ID with timeout
+        try:
+            index_result, index_error = check_index_id(api_key, index_id)
+            if not index_result:
+                return jsonify({'error': index_error}), 400
+        except Exception as e:
+            return jsonify({'error': f'Index validation error: {str(e)}'}), 500
 
-        hashed_password = generate_password_hash(password)
-        users_collection.insert_one({
-            "email": email,
-            "password": hashed_password,
-            "api_key": api_key,
-            "index_id": index_id
-        })
-        return redirect(url_for('login'))
-    return render_template('register.html')
+        # Create user in database
+        try:
+            hashed_password = generate_password_hash(password)
+            users_collection.insert_one({
+                "email": email,
+                "password": hashed_password,
+                "api_key": api_key,
+                "index_id": index_id
+            })
+            return jsonify({'message': 'Registration successful'}), 201
+        except Exception as e:
+            return jsonify({'error': f'Database error: {str(e)}'}), 500
 
-@app.route('/index')
-@login_required
-def index():
-    if 'email' not in session:
-        return redirect(url_for('login'))
-    return render_template('index.html')
+    except Exception as e:
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
-@app.route('/get_question')
-@login_required
+@app.route('/api/questions/next', methods=['GET'])
+@jwt_required()
 def get_question():
-    print("get_question route called")
-    print(f"asked_questions before: {session.get('asked_questions')}") #added
-    if 'asked_questions' not in session:
-        session['asked_questions'] = []
+    user_id = get_jwt_identity()
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
 
-    available_questions = [q for q in INTERVIEW_QUESTIONS if q not in session['asked_questions']]
-    print(f"available_questions: {available_questions}") #added
+    # Get user's asked questions from database
+    asked_questions = user.get('asked_questions', [])
+    available_questions = [q for q in INTERVIEW_QUESTIONS if q not in asked_questions]
 
     if not available_questions:
         return jsonify({"message": "All questions have been asked."})
 
     question = random.choice(available_questions)
-    session['asked_questions'].append(question)
-    session['current_question'] = question
-    print(f"asked_questions after: {session.get('asked_questions')}") #added
+    
+    # Update user's asked questions in database
+    users_collection.update_one(
+        {'_id': ObjectId(user_id)},
+        {
+            '$push': {'asked_questions': question},
+            '$set': {'current_question': question}
+        }
+    )
+    
     return jsonify({"question": question})
 
 
-@app.route('/upload', methods=['POST'])
-@login_required
+@app.route('/api/upload', methods=['POST'])
+@jwt_required()
 def upload():
-    if 'email' not in session:
-        return jsonify({"error": "Unauthorized"}), 401
-    api_key = session['api_key']
-    index_id = session['index_id']
-    email = session['email']
+    user_id = get_jwt_identity()
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+        
+    api_key = user['api_key']
+    index_id = user['index_id']
+    email = user['email']
 
     if not check_api_connection(api_key):
         return jsonify({"error": "Failed to connect to the Twelve Labs API."}), 500
@@ -438,41 +509,326 @@ def analyze_with_gemini(question, transcript):
         print(f"Error in Gemini analysis: {e}")
         return "Gemini analysis failed."
 
-@app.route('/history')
-@login_required
+@app.route('/api/history')
+@jwt_required()
 def history():
-    if 'email' not in session:
-        return redirect(url_for('login'))
-    return render_template('history.html', questions=INTERVIEW_QUESTIONS)
+    user_id = get_jwt_identity()
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({'questions': INTERVIEW_QUESTIONS})
 
-@app.route('/history_question/<question>')
-@login_required
+@app.route('/api/history/<question>')
+@jwt_required()
 def history_question(question):
-    if 'email' not in session:
-        return redirect(url_for('login'))
-    email = session['email']
+    user_id = get_jwt_identity()
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+        
+    email = user['email']
     question = unquote(question)
-
-    document = results_collection.find_one({'email': email, 'question': question})
-
-    if document:
-        print(f"History question database: '{document['question']}'")
-    else:
-        print("No matching document found.")
 
     query = {"email": email, "question": question}
     results = list(results_collection.find(query).sort("_id", -1))
-    print(f"Query results: {results}")
-    return render_template('history_question.html', results=results, question=question)
+    
+    # Convert ObjectId to string for JSON serialization
+    for result in results:
+        result['_id'] = str(result['_id'])
+    
+    return jsonify({
+        'question': question,
+        'results': results
+    })
 
-@app.route('/logout')
-def logout():
-    session.pop('email', None)
-    session.pop('api_key', None)
-    session.pop('index_id', None)
-    session.pop('asked_questions', None)
-    session.pop('current_question', None)
-    return redirect(url_for('login'))
+@app.route('/api/user/profile')
+@jwt_required()
+def get_user_profile():
+    user_id = get_jwt_identity()
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({
+        'email': user['email'],
+        'api_key': user['api_key'],
+        'index_id': user['index_id']
+    })
+
+@app.route('/api/user/update', methods=['PUT'])
+@jwt_required()
+def update_user_profile():
+    user_id = get_jwt_identity()
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    update_fields = {}
+    
+    if 'api_key' in data:
+        api_result, api_error = check_api_connection(data['api_key'])
+        if not api_result:
+            return jsonify({'error': api_error}), 400
+        update_fields['api_key'] = data['api_key']
+    
+    if 'index_id' in data:
+        if 'api_key' in update_fields:
+            api_key = update_fields['api_key']
+        else:
+            api_key = user['api_key']
+        index_result, index_error = check_index_id(api_key, data['index_id'])
+        if not index_result:
+            return jsonify({'error': index_error}), 400
+        update_fields['index_id'] = data['index_id']
+    
+    if update_fields:
+        users_collection.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': update_fields}
+        )
+    
+    return jsonify({'message': 'Profile updated successfully'})
+
+@app.route('/api/user/reset-questions', methods=['POST'])
+@jwt_required()
+def reset_questions():
+    user_id = get_jwt_identity()
+    users_collection.update_one(
+        {'_id': ObjectId(user_id)},
+        {'$set': {'asked_questions': [], 'current_question': None}}
+    )
+    return jsonify({'message': 'Questions reset successfully'})
+
+@app.route('/resume/upload', methods=['POST'])
+@jwt_required()
+def upload_resume():
+    try:
+        user_id = get_jwt_identity()
+        user = users_collection.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+            
+        if 'resume' not in request.files:
+            return jsonify({"error": "No resume file provided"}), 400
+            
+        resume_file = request.files['resume']
+        if resume_file.filename == '':
+            return jsonify({"error": "No resume file selected"}), 400
+            
+        # Create uploads directory if it doesn't exist
+        resume_dir = os.path.join('uploads', 'resumes')
+        os.makedirs(resume_dir, exist_ok=True)
+        
+        # Generate a unique ID for this resume
+        resume_id = str(ObjectId())
+        
+        # Save the resume file
+        file_ext = os.path.splitext(resume_file.filename)[1]
+        resume_path = os.path.join(resume_dir, f"{resume_id}{file_ext}")
+        resume_file.save(resume_path)
+        
+        # Store job description if provided
+        job_description = request.form.get('job_description', '')
+        
+        # Store resume info in database
+        resume_data = {
+            "user_id": user_id,
+            "resume_id": resume_id,
+            "filename": resume_file.filename,
+            "file_path": resume_path,
+            "job_description": job_description,
+            "upload_date": datetime.datetime.now(),
+            "analyzed": False
+        }
+        
+        db.resumes.insert_one(resume_data)
+        
+        return jsonify({"resumeId": resume_id}), 200
+        
+    except Exception as e:
+        print(f"Error uploading resume: {str(e)}")
+        return jsonify({"error": f"Error uploading resume: {str(e)}"}), 500
+
+@app.route('/resume/analyze/<resume_id>', methods=['GET'])
+@jwt_required()
+def analyze_resume(resume_id):
+    try:
+        user_id = get_jwt_identity()
+        
+        # Find the resume in the database
+        resume_data = db.resumes.find_one({"resume_id": resume_id, "user_id": user_id})
+        if not resume_data:
+            return jsonify({"error": "Resume not found"}), 404
+            
+        # Check if resume has already been analyzed
+        if resume_data.get("analysis"):
+            return jsonify({
+                "analysis": resume_data["analysis"],
+                "aiGeneratedResume": resume_data.get("ai_generated_resume", "")
+            }), 200
+            
+        # Extract text from resume file
+        # For simplicity, we'll assume it's a text file for now
+        # In a real app, you'd use libraries like PyPDF2 for PDFs or python-docx for Word docs
+        resume_text = ""
+        with open(resume_data["file_path"], "r", encoding="utf-8", errors="ignore") as f:
+            resume_text = f.read()
+            
+        # Get job description if available
+        job_description = resume_data.get("job_description", "")
+        
+        # Analyze resume with Gemini AI
+        prompt = f"""
+        You are a professional resume analyst. Please analyze the following resume:
+        
+        {resume_text}
+        
+        {"Job Description: " + job_description if job_description else ""}
+        
+        Provide a detailed analysis in the following JSON format:
+        {{"score": <number between 0-100>,
+         "summary": "<brief summary of the resume>",
+         "strengths": ["<strength 1>", "<strength 2>", ...],
+         "improvements": ["<improvement 1>", "<improvement 2>", ...],
+         "keywords": ["<keyword 1>", "<keyword 2>", ...]
+        }}
+        
+        {"Also include a job match analysis in the following format:\n" +
+        "\"job_match\": {{\n" +
+        "  \"score\": <match percentage>,\n" +
+        "  \"summary\": \"<summary of how well the resume matches the job>\",\n" +
+        "  \"missing_keywords\": [\"<missing keyword 1>\", \"<missing keyword 2>\", ...],\n" +
+        "  \"recommendations\": [\"<recommendation 1>\", \"<recommendation 2>\", ...]\n" +
+        "}}" if job_description else ""}
+        
+        Also generate an improved version of the resume that addresses the weaknesses and better highlights the strengths.
+        """
+        
+        # Call Gemini API
+        response = gemini_model.generate_content(prompt)
+        
+        # Parse the response
+        response_text = response.text
+        
+        # Extract JSON part for analysis
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        analysis_json = {}
+        ai_generated_resume = ""
+        
+        if json_match:
+            try:
+                analysis_json = json.loads(json_match.group())
+                # Extract the AI-generated resume from the remaining text
+                ai_generated_resume = response_text.replace(json_match.group(), "").strip()
+            except json.JSONDecodeError:
+                # If JSON parsing fails, use a default structure
+                analysis_json = {
+                    "score": 70,
+                    "summary": "Analysis could not be properly formatted.",
+                    "strengths": ["Resume has been received"],
+                    "improvements": ["Try uploading a different format"],
+                    "keywords": []
+                }
+        else:
+            # If no JSON found, use the whole response as the resume
+            ai_generated_resume = response_text
+            analysis_json = {
+                "score": 70,
+                "summary": "Basic resume analysis completed.",
+                "strengths": ["Resume has been processed"],
+                "improvements": ["Consider adding more details"],
+                "keywords": []
+            }
+        
+        # Add resumeId to the analysis
+        analysis_json["resumeId"] = resume_id
+        
+        # Update the database with the analysis results
+        db.resumes.update_one(
+            {"resume_id": resume_id},
+            {"$set": {
+                "analysis": analysis_json,
+                "ai_generated_resume": ai_generated_resume,
+                "analyzed": True,
+                "analysis_date": datetime.datetime.now()
+            }}
+        )
+        
+        return jsonify({
+            "analysis": analysis_json,
+            "aiGeneratedResume": ai_generated_resume
+        }), 200
+        
+    except Exception as e:
+        print(f"Error analyzing resume: {str(e)}")
+        return jsonify({"error": f"Error analyzing resume: {str(e)}"}), 500
+
+@app.route('/resume/chat', methods=['POST'])
+@jwt_required()
+def resume_chat():
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        resume_id = data.get('resumeId')
+        message = data.get('message')
+        
+        if not resume_id or not message:
+            return jsonify({"error": "Resume ID and message are required"}), 400
+            
+        # Find the resume in the database
+        resume_data = db.resumes.find_one({"resume_id": resume_id, "user_id": user_id})
+        if not resume_data:
+            return jsonify({"error": "Resume not found"}), 404
+            
+        # Get the analysis and resume text
+        analysis = resume_data.get("analysis", {})
+        ai_resume = resume_data.get("ai_generated_resume", "")
+        
+        # Create a prompt for Gemini
+        prompt = f"""
+        You are a helpful resume assistant. You have analyzed a user's resume and provided the following analysis:
+        
+        {json.dumps(analysis)}
+        
+        You have also generated an improved version of their resume:
+        
+        {ai_resume}
+        
+        The user is asking the following question about their resume:
+        
+        {message}
+        
+        Please provide a helpful, specific response to their question. Focus on practical advice that they can implement.
+        """
+        
+        # Call Gemini API
+        response = gemini_model.generate_content(prompt)
+        
+        # Store the chat in the database
+        if not resume_data.get("chat_history"):
+            db.resumes.update_one(
+                {"resume_id": resume_id},
+                {"$set": {"chat_history": []}}
+            )
+            
+        db.resumes.update_one(
+            {"resume_id": resume_id},
+            {"$push": {"chat_history": {
+                "user": message,
+                "ai": response.text,
+                "timestamp": datetime.datetime.now()
+            }}}
+        )
+        
+        return jsonify({"reply": response.text}), 200
+        
+    except Exception as e:
+        print(f"Error in resume chat: {str(e)}")
+        return jsonify({"error": f"Error processing chat: {str(e)}"}), 500
 
 if __name__ == '__main__':
     os.makedirs('uploads', exist_ok=True)
