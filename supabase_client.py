@@ -3,6 +3,8 @@ import json
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
+import datetime # Added for timestamping
+
 # Load environment variables
 load_dotenv()
 
@@ -86,6 +88,28 @@ def get_interview_results(user_id):
         print(f"Error getting interview results: {e}")
         return []
 
+def get_interview_results_for_question(user_id: str, question_text: str) -> list:
+    """Fetches all interview results for a specific question by a user, ordered by creation date."""
+    try:
+        admin_client = get_admin_client()
+        response = admin_client.table('interview_results') \
+                                     .select('*') \
+                                     .eq('user_id', user_id) \
+                                     .eq('question', question_text) \
+                                     .order('created_at', desc=True) \
+                                     .execute()
+
+        if response.data:
+            return response.data
+        if hasattr(response, 'error') and response.error:
+            print(f"Error fetching interview results for user {user_id}, question '{question_text}': {response.error}")
+            return []
+        return [] # No data and no specific error object (or caught by general exception)
+
+    except Exception as e:
+        print(f"Exception fetching interview results for user {user_id}, question '{question_text}': {e}")
+        return []
+
 def save_interview_result(user_id, question, user_answer, feedback, score):
     """Save interview result to database"""
     try:
@@ -100,6 +124,36 @@ def save_interview_result(user_id, question, user_answer, feedback, score):
         return response.data[0] if response.data else None
     except Exception as e:
         print(f"Error saving interview result: {e}")
+        return None
+
+def save_full_interview_analysis(user_id: str, video_id: str, question_text: str, twelvelabs_data: dict, gemini_analysis: str):
+    """Saves the complete interview analysis to Supabase."""
+    try:
+        data_to_insert = {
+            'user_id': user_id,
+            'video_id': video_id,
+            'question': question_text,
+            'twelvelabs_analysis': twelvelabs_data, # Should be JSON serializable
+            'gemini_analysis': gemini_analysis
+            # 'created_at' will be handled by the database default (now())
+        }
+
+        admin_client = get_admin_client()
+        # Supabase insert expects a list of dictionaries
+        response = admin_client.table('interview_results').insert([data_to_insert]).execute()
+
+        if response.data:
+            return response.data[0]
+        # Check for Supabase specific error object if data is empty
+        if hasattr(response, 'error') and response.error:
+            print(f"Error saving full interview analysis to Supabase: {response.error}")
+            return None
+        # If no data and no explicit error object, implies an issue or empty return not caught as error by client
+        print(f"No data returned and no explicit error object for Supabase insert. User: {user_id}, Video: {video_id}")
+        return None
+
+    except Exception as e:
+        print(f"Exception saving full interview analysis for user {user_id}, video {video_id}: {e}")
         return None
 
 def get_resume(user_id, resume_id=None):
@@ -151,4 +205,160 @@ def save_resume_analysis(resume_id, user_id, analysis_data):
         return response.data[0] if response.data else None
     except Exception as e:
         print(f"Error saving resume analysis: {e}")
+        return None
+
+# --- New Resume Handling Functions ---
+
+def save_resume_metadata(user_id: str, filename: str, file_path: str, job_description: str, client_resume_id: str) -> dict or None:
+    """Saves resume metadata to Supabase `resumes` table."""
+    try:
+        admin_client = get_admin_client()
+        data_to_insert = {
+            'user_id': user_id,
+            'client_resume_id': client_resume_id,
+            'filename': filename,
+            'file_path': file_path,
+            'job_description': job_description,
+            'upload_date': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'analyzed': False
+        }
+        response = admin_client.table('resumes').insert([data_to_insert]).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        print(f"Error saving resume metadata for user {user_id}: {e}")
+        return None
+
+def get_resume_metadata_by_id(resume_supa_id: str, user_id: str) -> dict or None:
+    """Fetches resume metadata by its Supabase ID, ensuring user owns it."""
+    try:
+        admin_client = get_admin_client()
+        response = admin_client.table('resumes').select('*').eq('id', resume_supa_id).eq('user_id', user_id).maybe_single().execute()
+        return response.data if response.data else None
+    except Exception as e:
+        print(f"Error fetching resume metadata by id {resume_supa_id} for user {user_id}: {e}")
+        return None
+
+def get_resume_metadata_by_client_id(client_resume_id: str, user_id: str) -> dict or None:
+    """Fetches resume metadata by its client-generated ID, ensuring user owns it."""
+    try:
+        admin_client = get_admin_client()
+        response = admin_client.table('resumes').select('*').eq('client_resume_id', client_resume_id).eq('user_id', user_id).maybe_single().execute()
+        return response.data if response.data else None
+    except Exception as e:
+        print(f"Error fetching resume metadata by client_id {client_resume_id} for user {user_id}: {e}")
+        return None
+
+
+def save_resume_analysis_data(resume_supa_id: str, user_id: str, analysis_json: dict, ai_generated_resume_text: str) -> dict or None:
+    """Saves resume analysis data to `resume_analysis` table."""
+    try:
+        admin_client = get_admin_client()
+        data_to_insert = {
+            'resume_id': resume_supa_id, # This is the Supabase PK of the resume record
+            'user_id': user_id,
+            'analysis_data': analysis_json,
+            'ai_generated_resume': ai_generated_resume_text,
+            'analysis_date': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+        response = admin_client.table('resume_analysis').insert([data_to_insert]).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        print(f"Error saving resume analysis data for resume_id {resume_supa_id}, user {user_id}: {e}")
+        return None
+
+def update_resume_with_analysis_info(resume_supa_id: str, analysis_supa_id: str, user_id: str):
+    """Updates the resume record to mark as analyzed and link to analysis entry."""
+    try:
+        admin_client = get_admin_client()
+        update_data = {'analyzed': True, 'analysis_id': analysis_supa_id} # analysis_id is FK to resume_analysis table
+        response = admin_client.table('resumes').update(update_data).eq('id', resume_supa_id).eq('user_id', user_id).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        print(f"Error updating resume with analysis info for resume {resume_supa_id}, user {user_id}: {e}")
+        return None
+
+def get_resume_analysis_by_resume_id(resume_supa_id: str, user_id: str) -> dict or None:
+    """Fetches resume analysis data by resume_id (Supabase PK of the resume), ensuring user owns it."""
+    try:
+        admin_client = get_admin_client()
+        # Assuming resume_analysis table has a 'resume_id' column that is a FK to resumes.id
+        response = admin_client.table('resume_analysis').select('*').eq('resume_id', resume_supa_id).eq('user_id', user_id).maybe_single().execute()
+        return response.data if response.data else None
+    except Exception as e:
+        print(f"Error fetching resume analysis by resume_id {resume_supa_id} for user {user_id}: {e}")
+        return None
+
+def add_resume_chat_message(resume_supa_id: str, user_id: str, user_message: str, ai_response: str) -> dict or None:
+    """Adds a chat message to the resume's chat_history."""
+    try:
+        admin_client = get_admin_client()
+        # Fetch current chat history
+        resume_record_response = admin_client.table('resumes').select('chat_history').eq('id', resume_supa_id).eq('user_id', user_id).maybe_single().execute()
+
+        if not resume_record_response.data:
+            print(f"Resume not found for chat: resume_id {resume_supa_id}, user_id {user_id}")
+            return None
+
+        chat_history = resume_record_response.data.get('chat_history') # Returns None if not present
+        if chat_history is None: # Handle case where chat_history might be null in DB
+            chat_history = []
+
+        chat_history.append({
+            'user': user_message,
+            'ai': ai_response,
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        })
+
+        update_response = admin_client.table('resumes').update({'chat_history': chat_history}).eq('id', resume_supa_id).eq('user_id', user_id).execute()
+        return update_response.data[0] if update_response.data else None
+    except Exception as e:
+        print(f"Error adding resume chat message for resume {resume_supa_id}, user {user_id}: {e}")
+        return None
+
+# Functions for user interview progress
+
+def get_user_interview_progress(user_id: str) -> dict:
+    """Fetches user's interview progress (asked questions, current question)."""
+    try:
+        admin_client = get_admin_client()
+        response = admin_client.table('user_interview_progress').select('asked_questions, current_question').eq('user_id', user_id).maybe_single().execute()
+        if response.data:
+            return response.data
+        return {'asked_questions': [], 'current_question': None} # Default if no record
+    except Exception as e:
+        print(f"Error getting user interview progress for {user_id}: {e}")
+        return {'asked_questions': [], 'current_question': None} # Fallback
+
+def update_user_interview_progress(user_id: str, asked_questions: list, current_question: str):
+    """Updates or creates user's interview progress."""
+    try:
+        admin_client = get_admin_client()
+        data_to_upsert = {
+            'user_id': user_id,
+            'asked_questions': asked_questions,
+            'current_question': current_question,
+            'updated_at': 'now()' # Let Supabase handle the timestamp
+        }
+        # Ensure data is a list of dicts for upsert
+        response = admin_client.table('user_interview_progress').upsert([data_to_upsert], on_conflict='user_id').execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        print(f"Error updating user interview progress for {user_id}: {e}")
+        return None
+
+def reset_user_interview_progress(user_id: str):
+    """Resets user's interview progress to initial state."""
+    try:
+        admin_client = get_admin_client()
+        data_to_upsert = {
+            'user_id': user_id,
+            'asked_questions': [],
+            'current_question': None,
+            'updated_at': 'now()'
+        }
+        # Ensure data is a list of dicts for upsert
+        response = admin_client.table('user_interview_progress').upsert([data_to_upsert], on_conflict='user_id').execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        print(f"Error resetting user interview progress for {user_id}: {e}")
         return None

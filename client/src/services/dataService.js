@@ -2,26 +2,26 @@ import { supabaseDB } from '../lib/supabase'
 
 // Data service for handling database operations with Supabase
 export const dataService = {
-  // User-related operations
+  // User-related operations (now refers to 'profiles' table)
   users: {
-    // Get user by ID
+    // Get user profile by ID
     getById: async (userId) => {
-      return await supabaseDB.select('users', '*', { id: userId })
+      return await supabaseDB.select('profiles', '*', { id: userId });
     },
 
-    // Get user by email
+    // Get user profile by email (if email is a unique column in profiles)
     getByEmail: async (email) => {
-      return await supabaseDB.select('users', '*', { email })
+      return await supabaseDB.select('profiles', '*', { email });
     },
 
-    // Update user
+    // Update user profile
     update: async (userId, userData) => {
-      return await supabaseDB.update('users', userData, { id: userId })
+      return await supabaseDB.update('profiles', userData, { id: userId });
     },
 
-    // Delete user
+    // Delete user profile (use with caution, might need to handle auth user deletion separately)
     delete: async (userId) => {
-      return await supabaseDB.delete('users', { id: userId })
+      return await supabaseDB.delete('profiles', { id: userId });
     }
   },
 
@@ -29,34 +29,36 @@ export const dataService = {
   results: {
     // Get all results for a user
     getByUser: async (userId) => {
-      return await supabaseDB.select('interview_results', '*', { user_id: userId })
+      return await supabaseDB.select('interview_results', '*', { user_id: userId });
     },
 
-    // Get results by email (for backward compatibility)
-    getByEmail: async (email) => {
-      return await supabaseDB.select('interview_results', '*', { email })
-    },
+    // Get results by email (for backward compatibility) - Commented out
+    // getByEmail: async (email) => {
+    //   return await supabaseDB.select('interview_results', '*', { email });
+    // },
 
     // Get results by question
+    // This client-side one might be redundant or for a different purpose than backend API.
+    // Keeping as is for now. It uses the global supabase client.
     getByQuestion: async (userId, question) => {
-      const { data, error } = await supabase
+      const { data, error } = await supabase // Note: uses global supabase, not supabaseDB helper
         .from('interview_results')
         .select('*')
         .eq('user_id', userId)
         .eq('question', question)
-        .order('created_at', { ascending: false })
+        .order('created_at', { ascending: false });
       
-      return { data, error }
+      return { data, error };
     },
 
-    // Create new result
-    create: async (resultData) => {
-      return await supabaseDB.insert('interview_results', {
-        ...resultData,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-    },
+    // Create new result - Commented out
+    // create: async (resultData) => {
+    //   return await supabaseDB.insert('interview_results', {
+    //     ...resultData,
+    //     created_at: new Date().toISOString(),
+    //     updated_at: new Date().toISOString()
+    //   });
+    // },
 
     // Update result
     update: async (resultId, resultData) => {
@@ -79,19 +81,32 @@ export const dataService = {
       return await supabaseDB.select('resumes', '*', { user_id: userId })
     },
 
-    // Get resume by ID
+    // Get resume by ID (Supabase UUID)
     getById: async (resumeId) => {
-      return await supabaseDB.select('resumes', '*', { id: resumeId })
+      return await supabaseDB.select('resumes', '*', { id: resumeId });
     },
 
-    // Create new resume
-    create: async (resumeData) => {
-      return await supabaseDB.insert('resumes', {
-        ...resumeData,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
+    // Get resume by client-generated ID
+    getByClientId: async (clientResumeId) => {
+      // Assumes supabaseDB.select returns an object like { data, error }
+      // and data is an array.
+      const { data, error } = await supabaseDB.select('resumes', '*', { client_resume_id: clientResumeId });
+      if (error) {
+        console.error('Error fetching resume by client_resume_id:', error.message);
+        return { data: null, error };
+      }
+      // Return the single record or null if not found
+      return { data: data?.[0] || null, error: null };
     },
+
+    // Create new resume - Commented out
+    // create: async (resumeData) => {
+    //   return await supabaseDB.insert('resumes', {
+    //     ...resumeData,
+    //     created_at: new Date().toISOString(),
+    //     updated_at: new Date().toISOString()
+    //   });
+    // },
 
     // Update resume
     update: async (resumeId, resumeData) => {

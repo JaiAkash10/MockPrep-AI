@@ -18,16 +18,15 @@ export const authService = {
         throw new Error(authError.message)
       }
 
-      // If user is created, add additional profile data to users table
+      // If user is created, add additional profile data to profiles table
       if (authData.user && !authError) {
-        const { error: profileError } = await supabaseDB.insert('users', {
-          id: authData.user.id,
-          email: authData.user.email,
+        const { error: profileError } = await supabaseDB.insert('profiles', { // Changed 'users' to 'profiles'
+          id: authData.user.id, // This is the user's UUID from Supabase auth
+          // email is typically in auth.users table and linked via id.
           api_key: additionalData.api_key || null,
           index_id: additionalData.index_id || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
+          // created_at and updated_at are generally handled by Supabase table defaults.
+        });
 
         if (profileError) {
           console.error('Error creating user profile:', profileError)
